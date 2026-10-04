@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mis Outfits</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1f2937">
+    <style>
+        :root { --bg: #111827; --surface: #1f2937; --primary: #ec4899; --text: #f9fafb; --text-muted: #9ca3af; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; padding-bottom: 80px; }
+        h1, h2, h3 { margin-top: 0; }
+        .card { background: var(--surface); padding: 15px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        input[type="text"], select { width: 100%; padding: 10px; margin-top: 8px; border-radius: 8px; border: 1px solid #374151; background: var(--bg); color: var(--text); box-sizing: border-box; }
+        button, .btn { display: inline-block; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; font-weight: bold; text-align: center; cursor: pointer; margin-top: 10px; box-sizing: border-box; }
+        input[type="file"] { display: none; }
+        .preview-img { width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-top: 10px; display: none; }
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+        .checkbox-group label { background: var(--bg); padding: 8px 12px; border-radius: 20px; font-size: 0.9em; display: flex; align-items: center; gap: 5px; border: 1px solid #374151; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; }
+        .item-card { background: var(--surface); border-radius: 12px; overflow: hidden; }
+        .item-card img { width: 100%; height: 150px; object-fit: cover; }
+        .item-card .info { padding: 10px; }
+        .item-card .tags { font-size: 0.8em; color: var(--primary); margin-top: 5px; }
+        #loginScreen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; text-align: center; }
+        #appContainer { display: none; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
+        .logout-btn { background: #ef4444; width: auto; padding: 8px 15px; margin-top: 0; }
+    </style>
+</head>
+<body>
+    <div id="loginScreen">
+        <h1>Mis Outfits</h1>
+        <p>Inicia sesión para guardar tu ropa en la nube</p>
+        <button id="loginBtn" style="background: #4285F4;">Iniciar sesión con Google</button>
+    </div>
+
+    <div id="appContainer">
+        <div class="header">
+            <h1>Mis Outfits</h1>
+            <button id="logoutBtn" class="logout-btn">Salir</button>
+        </div>
+        <div class="card">
+            <h3>Registrar Seres Queridos</h3>
+            <input type="text" id="newPerson" placeholder="Ej. Mamá, Juan...">
+            <button id="addPersonBtn">Agregar Persona</button>
+        </div>
+        <div class="card">
+            <h3>Nueva Prenda</h3>
+            <label class="btn">
+                📸 Abrir Cámara
+                <input type="file" id="cameraInput" accept="image/*" capture="environment">
+            </label>
+            <img id="preview" class="preview-img">
+            <input type="text" id="itemName" placeholder="Ej. Camisa Azul">
+            <p style="margin-bottom: 5px; margin-top: 15px; font-size: 0.9em;">¿Quién ya te vio con esto?</p>
+            <div id="peopleCheckboxes" class="checkbox-group"></div>
+            <button id="saveItemBtn" style="background: #10b981;">Guardar Prenda</button>
+        </div>
+        <div class="card">
+            <h3>Mi Armario</h3>
+            <p style="font-size: 0.9em; margin-bottom: 5px; color: var(--text-muted);">Quiero ver ropa que <b>NO</b> me haya visto:</p>
+            <select id="filterPerson">
+                <option value="">Mostrar todo</option>
+            </select>
+        </div>
+        <div id="gallery" class="grid"></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-storage.js";
+
+        // Tu configuración recuperada
+        const firebaseConfig = {
+            apiKey: "AIzaSyDawixERthu8gHpy-ckb8PMNVOMhlBEQMs",
+            authDomain: "mbwe-multiplayer.firebaseapp.com",
+            databaseURL: "https://mbwe-multiplayer-default-rtdb.firebaseio.com",
+            projectId: "mbwe-multiplayer",
+            storageBucket: "mbwe-multiplayer.appspot.com"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        let currentUser = null;
+        let currentImageBlob = null;
+
+        const loginScreen = document.getElementById('loginScreen');
+        const appContainer = document.getElementById('appContainer');
+        const loginBtn = document.getElementById('loginBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const cameraInput = document.getElementById('cameraInput');
+        const preview = document.getElementById('preview');
+        
+        loginBtn.addEventListener('click', () => {
+            const provider = new GoogleAuthProvider();
+            signInWithPopup(auth, provider).catch(err => console.error(err));
+        });
+
+        logoutBtn.addEventListener('click', () => {
+            signOut(auth);
+        });
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                loginScreen.style.display = 'none';
+                appContainer.style.display = 'block';
+                loadPeople();
+                loadItems();
+            } else {
+                currentUser = null;
+                loginScreen.style.display = 'flex';
+                appContainer.style.display = 'none';
+            }
+        });
+
+        cameraInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                currentImageBlob = file;
+                preview.src = URL.createObjectURL(file);
+                preview.style.display = 'block';
+            }
+        });
+
+        document.getElementById('addPersonBtn').addEventListener('click', async () => {
+            const name = document.getElementById('newPerson').value.trim();
+            if (!name) return;
+            const btn = document.getElementById('addPersonBtn');
+            btn.textContent = "Agregando...";
+            
+            try {
+                await addDoc(collection(db, `users/${currentUser.uid}/people`), { name: name });
+                document.getElementById('newPerson').value = '';
+                loadPeople();
+            } catch (e) {
+                alert("Error al agregar persona");
+            }
+            btn.textContent = "Agregar Persona";
+        });
+
+        async function loadPeople() {
+            const q = query(collection(db, `users/${currentUser.uid}/people`));
+            const querySnapshot = await getDocs(q);
+            
+            const container = document.getElementById('peopleCheckboxes');
+            const filter = document.getElementById('filterPerson');
+            
+            container.innerHTML = '';
+            filter.innerHTML = '<option value="">Mostrar todo</option>';
+
+            querySnapshot.forEach((doc) => {
+                const p = doc.data();
+                container.innerHTML += `<label><input type="checkbox" value="${p.name}"> ${p.name}</label>`;
+                filter.innerHTML += `<option value="${p.name}">${p.name}</option>`;
+            });
+        }
+
+        document.getElementById('saveItemBtn').addEventListener('click', async () => {
+            const name = document.getElementById('itemName').value.trim();
+            if (!name || !currentImageBlob) {
+                alert("Toma una foto y ponle un nombre.");
+                return;
+            }
+
+            const btn = document.getElementById('saveItemBtn');
+            btn.textContent = "Subiendo imagen...";
+            btn.disabled = true;
+
+            try {
+                const checkboxes = document.querySelectorAll('#peopleCheckboxes input:checked');
+                const seenBy = Array.from(checkboxes).map(cb => cb.value);
+                const timestamp = new Date().getTime();
+
+                const imageRef = ref(storage, `outfits/${currentUser.uid}/${timestamp}.jpg`);
+                await uploadBytes(imageRef, currentImageBlob);
+                const imageUrl = await getDownloadURL(imageRef);
+
+                btn.textContent = "Guardando datos...";
+                await addDoc(collection(db, `users/${currentUser.uid}/clothes`), {
+                    name: name,
+                    imageUrl: imageUrl,
+                    seenBy: seenBy,
+                    timestamp: timestamp
+                });
+
+                document.getElementById('itemName').value = '';
+                preview.style.display = 'none';
+                currentImageBlob = null;
+                cameraInput.value = '';
+                document.querySelectorAll('#peopleCheckboxes input').forEach(cb => cb.checked = false);
+                loadItems();
+                alert("¡Prenda guardada en la nube!");
+
+            } catch (error) {
+                console.error(error);
+                alert("Error al guardar");
+            }
+
+            btn.textContent = "Guardar Prenda";
+            btn.disabled = false;
+        });
+
+        document.getElementById('filterPerson').addEventListener('change', loadItems);
+
+        async function loadItems() {
+            const filterName = document.getElementById('filterPerson').value;
+            const q = query(collection(db, `users/${currentUser.uid}/clothes`), orderBy("timestamp", "desc"));
+            const querySnapshot = await getDocs(q);
+            
+            const gallery = document.getElementById('gallery');
+            gallery.innerHTML = '';
+
+            querySnapshot.forEach((doc) => {
+                const item = doc.data();
+                
+                if (filterName && item.seenBy.includes(filterName)) return; 
+
+                const seenText = item.seenBy.length > 0 ? `Visto por: ${item.seenBy.join(', ')}` : 'Nadie lo ha visto';
+                
+                gallery.innerHTML += `
+                    <div class="item-card">
+                        <img src="${item.imageUrl}" alt="${item.name}" loading="lazy">
+                        <div class="info">
+                            <strong>${item.name}</strong>
+                            <div class="tags">${seenText}</div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+</body>
+</html>
